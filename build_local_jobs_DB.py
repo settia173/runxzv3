@@ -10,7 +10,7 @@ bge_embedding = embedding_functions.SentenceTransformerEmbeddingFunction(
 
 
 # 1. 创建 ChromaDB collection
-client = chromadb.PersistentClient(path="./chroma_data")
+client = chromadb.PersistentClient(path="./local_jobs_chromaDB")
 collection = client.create_collection(
     name="jobs",
     embedding_function=bge_embedding,

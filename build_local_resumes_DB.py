@@ -1,7 +1,8 @@
+# -*- coding: utf-8 -*-
 from chromadb.utils import embedding_functions
 import chromadb
 import json
-
+import re
 
 # 创建 BGE 中文嵌入模型实例
 bge_embedding = embedding_functions.SentenceTransformerEmbeddingFunction(
@@ -10,7 +11,7 @@ bge_embedding = embedding_functions.SentenceTransformerEmbeddingFunction(
 
 
 # 1. 创建 ChromaDB collection
-client = chromadb.PersistentClient(path="./chroma_resume_data")
+client = chromadb.PersistentClient(path="./local_resumes_chromaDB")
 collection = client.create_collection(
     name="resumes",
     embedding_function=bge_embedding,
@@ -22,11 +23,15 @@ def process_resumes(resumes):
     for resume in resumes:
         # 获取文本内容
         text = resume.get('resume_content', '')
-  
+        # 提取电话号码
+        phone_pattern = r'1[3-9]\d{9}'
+        phone_match = re.search(phone_pattern, text)
+        phone = phone_match.group() if phone_match else ''
         # 元数据
         resumes_metadata = {
             "name": resume.get("name", ""),
             "stu_id": resume.get("stu_ids", ""), 
+            "mobiles": phone
         }
         stu_id = str(resume.get("stu_ids", ""))   
         # 添加到collection

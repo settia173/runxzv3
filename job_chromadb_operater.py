@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from chromadb.utils import embedding_functions  
 import chromadb
 import json
@@ -8,7 +9,7 @@ bge_embedding = embedding_functions.SentenceTransformerEmbeddingFunction(
 )
 
 # 连接到已有的 ChromaDB collection
-client = chromadb.PersistentClient(path="./chroma_data")
+client = chromadb.PersistentClient(path="./local_jobs_chromaDB")
 collection = client.get_collection(
     name="jobs",
     embedding_function=bge_embedding

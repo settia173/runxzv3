@@ -1,10 +1,13 @@
+# -*- coding: utf-8 -*-
 import gradio as gr
-from resume_chromadb_operater import add_resume, delete_resume, query_resume, similarity_search as resume_similarity_search, batch_add_resumes
-from job_chromadb_operater import add_job, delete_job, query_job, similarity_search as job_similarity_search, batch_add_jobs
 import json
 import numpy as np
+import os
+from resume_chromadb_operater import add_resume, delete_resume, query_resume, similarity_search as resume_similarity_search, batch_add_resumes
+from job_chromadb_operater import add_job, delete_job, query_job, similarity_search as job_similarity_search, batch_add_jobs
+from send_message import send_batch_messages
 
-def add_resume_ui(name, stu_id, resume_content):
+def add_resume_ui(name, stu_id,resume_content):
     """添加简历的UI处理函数"""
     resume_data = {
         "name": name,
@@ -27,7 +30,7 @@ def query_resume_ui(stu_id):
     """查询简历的UI处理函数"""
     result = query_resume(stu_id)
     if result:
-        return f"学生姓名：{result['metadata']['name']}\n\n简历内容：\n{result['content']}"
+        return f"学生姓名：{result['metadata']['name']}\n学生学号：{result['metadata']['stu_id']}\n学生电话：{result['metadata']['mobiles']}\n简历内容：\n{result['content']}"
     return "未找到对应学号的简历信息。"
 
 def search_similar_resumes_by_job(company_name, job_id, job_requirements, job_responsibilities, major="", job_url="", num_results=10):
@@ -140,17 +143,38 @@ def handle_resume_json_upload(file):
             
         if isinstance(file, list):
             file = file[0]  # Gradio可能返回文件列表
-            
+
+        print(f"文件类型: {type(file)}")   
+
         if hasattr(file, "name"):  # 新版本Gradio
             with open(file.name, "r", encoding="utf-8") as f:
                 resume_data = json.load(f)
+                print(f"读取到的数据: {resume_data[:2]}")  # 打印前两条数据
         else:  # 兼容处理
             content = file.decode('utf-8')
             resume_data = json.loads(content)
+            print(f"解码后的数据: {resume_data[:2]}")  # 打印前两条数据
+            
+        if not isinstance(resume_data, list):
+            return "上传的JSON文件格式错误，应为简历列表"
+            
+        # 检查数据格式
+        for idx, resume in enumerate(resume_data):
+            if not all(key in resume for key in ["name", "stu_ids", "resume_content"]):
+                return f"第{idx+1}条数据缺少必要字段(name/stu_ids/resume_content)"
             
         success_count = batch_add_resumes(resume_data)
+        
+        # 验证添加结果
+        print(f"尝试添加的总数: {len(resume_data)}")
+        print(f"成功添加数量: {success_count}")
+        
+        if success_count == 0:
+            return "导入失败：未能成功添加任何简历"
+        
         return f"成功导入 {success_count} 份简历"
     except Exception as e:
+        print(f"导入异常: {str(e)}")  # 打印详细错误信息
         return f"导入失败：{str(e)}"
 
 def handle_job_json_upload(file):
@@ -174,8 +198,118 @@ def handle_job_json_upload(file):
     except Exception as e:
         return f"导入失败：{str(e)}"
 
+def send_job_recommendations_sms(file):
+    """处理发送岗位推荐短信"""
+    try:
+        if file is None:
+            return "请选择要上传的文件"
+            
+        if isinstance(file, list):
+            file = file[0]
+            
+        print("=" * 50)
+        print(f"文件类型: {type(file)}")
+        
+        if hasattr(file, "name"):
+            print(f"读取文件: {file.name}")
+            with open(file.name, "r", encoding="utf-8") as f:
+                students_data = json.load(f)
+                print(f"读取到的学生数据: {len(students_data)}条")
+        else:
+            content = file.decode('utf-8')
+            students_data = json.loads(content)
+        
+        # 获取当前日期
+        from datetime import datetime
+        today = datetime.today()
+        date_str = f"{today.year}年{today.month}月{today.day}日"
+        
+        messages_data = []
+        for idx, student in enumerate(students_data):
+            name = student.get('name')
+            mobile = student.get('mobile')
+            stu_id = student.get('stu_id', '')
+            resume_content = student.get('resume_content', '')
+            
+            print(f"处理第{idx+1}个学生: {name}, 手机: {mobile}")
+            
+            if not all([name, mobile, resume_content]):
+                print(f"数据不完整: {student}")
+                continue
+            
+            # 获取岗位推荐
+            results = job_similarity_search(resume_content, n_results=10)
+            if not results or not results['documents']:
+                print(f"未找到匹配岗位: {name}")
+                continue
+                
+            # 提取岗位URL
+            job_urls = [meta.get('job_url', '') for meta in results['metadatas'][0][:10]]
+            job_urls = [url for url in job_urls if url]  # 过滤空URL
+            
+            if not job_urls:
+                print(f"无有效岗位链接: {name}")
+                continue
+            
+            # 构建短信内容
+            content = f"亲爱的毕业生同学{name}：\n" \
+                     f"您好！为帮助大家提高应聘成功率，精准瞄准应聘岗位，学校根据同学们在就业信息网填写的简历，" \
+                     f"与企业岗位需求进行精准匹配，已为您筛选出{len(job_urls)}个适配度高的岗位。点击下方链接，即可查看岗位详情：\n"
+            
+            for i, url in enumerate(job_urls, 1):
+                content += f"岗位{i}：{url}\n"
+            
+            content += f"\n这些推荐岗位会随您简历完善、内容更新及新岗位发布而变化。" \
+                     f"建议您定期查收短信或关注学校就业信息网、“深技大就业”公众号、学院通知等相关通知，以免错过合适机会。\n\n" \
+                     f"深圳技术大学学生就业指导中心\n" \
+                     f"{date_str}"
+            
+            print(f"短信内容长度: {len(content)}")
+            
+            messages_data.append({
+                "name": name,
+                "mobile": mobile,
+                "content": content
+            })
+        
+        if not messages_data:
+            return "没有需要发送的短信数据"
+            
+        # 批量发送短信
+        print(f"准备发送 {len(messages_data)} 条短信")
+        result = send_batch_messages(messages_data)
+        print(f"发送结果: {result}")
+        
+        if not result:
+            return "发送失败：未收到发送结果"
+            
+        return f"发送完成！成功：{result['success']}条，失败：{result['fail']}条\n" \
+               f"总计尝试发送：{len(messages_data)}条"
+               
+    except Exception as e:
+        print(f"发送异常: {str(e)}")
+        import traceback
+        print(traceback.format_exc())
+        return f"发送失败：{str(e)}"
+
+def map_distance_to_score(distance):
+    """将余弦距离映射到45-95的分数区间，使用sigmoid函数实现非线性映射
+    - 分数主要集中在55-85区间
+    - 45-55和85-95各占约15%的比例
+    """
+    # 首先将distance转换为初始分数
+    raw_score = (1 - distance) * 100
+    
+    # 使用sigmoid函数进行非线性映射
+    def sigmoid(x, k=0.15):
+        return 1 / (1 + np.exp(-k * (x - 50)))
+    
+    # 映射到45-95区间
+    mapped_score = 45 + 50 * sigmoid(raw_score)
+    return mapped_score
+
 # 创建Gradio界面
-with gr.Blocks(title="润小职Agent青春版") as demo:
+with gr.Blocks(title="润小职Agent青春版",theme=gr.themes.Soft(), ) as demo:
     gr.Markdown("## 润小职Agent青春版")
     
     with gr.Tab("添加简历"):
@@ -282,22 +416,21 @@ with gr.Blocks(title="润小职Agent青春版") as demo:
         match_btn.click(search_similar_jobs_by_resume,
                    inputs=[resume_name, resume_id, resume_text],
                    outputs=match_output)
-def map_distance_to_score(distance):
-    """将余弦距离映射到45-95的分数区间，使用sigmoid函数实现非线性映射
-    - 分数主要集中在55-85区间
-    - 45-55和85-95各占约15%的比例
-    """
-    # 首先将distance转换为初始分数
-    raw_score = (1 - distance) * 100
-    
-    # 使用sigmoid函数进行非线性映射
-    def sigmoid(x, k=0.15):
-        return 1 / (1 + np.exp(-k * (x - 50)))
-    
-    # 映射到45-95区间
-    mapped_score = 45 + 50 * sigmoid(raw_score)
-    return mapped_score
+        
+    with gr.Tab("发送岗位推荐"):
+        gr.Markdown("### 批量发送岗位推荐短信")
+        gr.Markdown("请上传包含学生信息的JSON文件，格式为：\n```json\n[\n  {\n    \"name\": \"张三\",\n    "
+                   "\"stu_id\": \"202100000001\",\n    \"mobile\": \"13800138000\",\n    "
+                   "\"resume_content\": \"简历内容...\"\n  }\n]\n```")
+        with gr.Row():
+            sms_file_input = gr.File(label="上传学生信息JSON文件", file_types=[".json"])
+            sms_output = gr.Textbox(label="发送结果")
+        sms_file_input.change(send_job_recommendations_sms,
+                            inputs=[sms_file_input],
+                            outputs=sms_output)
+        
+
 
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+    demo.launch(server_name="0.0.0.0", server_port=7860,share=True)
